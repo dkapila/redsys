@@ -9,6 +9,8 @@ async = require("async");
 S = require("string");
 stream = require "stream"
 
+service = require ("../server/service");
+
 created = {};
 
 agentToProject = {};
@@ -85,6 +87,7 @@ updateIfNecessary = (docName, initValueCallback, callback) ->
 	], callback;
 
 readVFSFile = (vfs, docName, callback)->
+	console.log(docName);
 	async.waterfall [
 		(callback) -> vfs.readfile docName, {}, (err, data) ->
 			return callback(err) if err?
@@ -114,6 +117,8 @@ writeVFSFile = (vfs, docName, data, callback)->
 
 
 
+
+
 auth = (agent, action) ->
 	# handling normal actions
 	# console.log("session id=", agent.sessionId, "action=",action.name);
@@ -127,6 +132,7 @@ auth = (agent, action) ->
 	
 	docName = action.docName;
 	vfs = projectData.vfs
+
 
 	readFile = (callback) ->
 		readVFSFile(vfs, docName, callback);
@@ -150,10 +156,13 @@ auth = (agent, action) ->
 	console.log("What does ", action.type, "mean?");
 	return action.reject();
 
+
 exports.attach = (app, options)->
 	app.post '/setProject', handle_setProject;	
 	app.post '/saveFile', handle_saveFile;	
 	app.get '/list', handle_listFiles;	
+	app.get '/start', service.start;
+	app.get '/stop' , service.stop;
 
 	options.auth = auth
 	model = sharejs.createModel(options) if not model?
