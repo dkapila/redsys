@@ -2,47 +2,42 @@
   <head>
     <link href="lib/jquery-ui/css/smoothness/jquery-ui.min.css" rel="stylesheet" type="text/css">
     <link href="ace/style.css" rel="stylesheet" type="text/css">
-    <link href="css/style.css" rel="stylesheet" type="text/css">
-    <link href="css/icon.css" rel="stylesheet" type="text/css">
     <title>Code editor</title>
 
     <script src="/lib/require.js"></script>
     <script src="/lib/jquery-ui/jquery.js"></script>
     <script src="/lib/jquery-ui/jquery-ui-min.js"></script>
+    <script src="/lib/ace/ace.js"></script>
+    <script src="/lib/ace/mode-latex.js"></script>
+    <script src="/lib/ace/theme-idle_fingers.js"></script>
+    <script src="/lib/ace/keybinding-emacs.js"></script>
+
   </head>
 
   <script>
     require.config({
       baseUrl: ".",
       shim: {
-        "/share/Changeset.js": {
-          deps: ["/share/AttributePool.js"]
+        "share/Changeset": {
+          deps: ["share/AttributePool"]
         },
-        "/share/share.uncompressed.js": {
-          deps: ["/channel/bcsocket.js", "/share/Changeset.js"]
+        "share/share.uncompressed": {
+          deps: ["channel/bcsocket", "share/Changeset"]
         },
-        "/share/ace.js": {
-          deps: ["/share/share.uncompressed.js"]
+        "share/ace": {
+          deps: ["share/share.uncompressed"]
         },
-        "/lib/ace/mode-latex.js": {
-          deps: ["/lib/ace/ace.js"]
-        },
-        "/lib/ace/keybinding-emacs.js": {
-          deps: ["/lib/ace/ace.js"]
-        },
-        "/lib/ace/theme-idle_fingers.js": {
-          deps: ["/lib/ace/ace.js"]
-        }
       },
     }); 
 
     require(["redsys", "editor", "lib/async"], function(redsys, Editor, async) {
+      window.redsys = redsys;
       var editor = null;
       async.waterfall([
           function (callback) { redsys.setProject("sample_project", callback); }, 
-          function (callback) { editor = new Editor("editor", redsys); editor.open("energy.tex", callback); },
-          function (callback) { redsys.getList("/", callback); },
-          function (data) { console.log(data); callback(); },
+          function (callback) { editor = new Editor(redsys); editor.open("editor", "energy.tex", callback); },
+          function (callback) { redsys.getServices(callback); },
+          function (data, callback) { redsys.enableService("nnexus", "energy.tex", callback); },
           function (callback) { 
             editor.addShortcut("save", "C-x C-s", function(ace) {
               editor.save();

@@ -1,6 +1,9 @@
 default_text_format = "etherpad";
+express = require('express');
+sessionHandler = require('share/src/server/session').handler
+sharejs = require('share').server
+{EventEmitter} = require 'events'
 
-sharejs = require("share").server;
 Changeset = require("share").types.etherpad.Changeset;
 AttributePool = require("share").types.etherpad.AttributePool;
 projects = {};
@@ -8,6 +11,11 @@ hat = require("hat");
 async = require("async");
 S = require("string");
 stream = require "stream"
+path = require "path"
+serviceManager = require "./service_manager"
+console.log(serviceManager);
+
+browserChannel = require('browserchannel').server
 
 service = require ("../server/service");
 
@@ -19,11 +27,29 @@ model = null
 valid_file = (fileName, vfs, callback) ->
 	vfs.stat(fileName, {}, callback);
 
-handle_listFiles = (req, res) ->
-	msg = req.query;
-	return res.send(JSON.stringify({status:"error", message:"No path given" })) if not msg.path?;
+handle_action = (msg, callback) ->
+	return handle_setProject(msg.data, callback) if (msg.action == "setProject");
+	return handle_listFiles(msg.data, callback) if (msg.action == "listFiles");
+	return handle_listServices(msg.data, callback) if (msg.action == "listServices");
+	return handle_enableService(msg.data, callback) if (msg.action == "enableService");
+	return callback("don't know how to handle "+msg);
+
+handle_listServices = (msg, callback) ->
 	projectData  = agentToProject[msg.client];
-	return res.send(JSON.stringify({status:"error", message:"No project opened." })) if not projectData?;
+	return callback("No project opened.") if not projectData?;
+	callback null, serviceManager.getAvailableServices()
+
+handle_enableService = (msg, callback) ->
+	projectData  = agentToProject[msg.client];
+	return callback("No project opened.") if not projectData?;
+	return callback("No file specified.") if not msg.file?;
+	return callback("No service specified.") if not msg.service?;
+	callback null, serviceManager.enableService(msg.service, msg.file, projectData.project)
+
+handle_listFiles = (msg, callback) ->
+	return callback("No path given" ) if not msg.path?;
+	projectData  = agentToProject[msg.client];
+	return callback("No project opened.") if not projectData?;
 	vfs = projectData.vfs
 	async.waterfall [
 		(callback) -> vfs.readdir msg.path, {}, (err, meta) ->
@@ -36,27 +62,22 @@ handle_listFiles = (req, res) ->
 			list.on("end", () ->
 				callback(null, result);
 				)
-
-			#list.resume();
-
 	], (err, data) ->
-		return res.send JSON.stringify({status:"error", message: err}) if err?;
-		res.send JSON.stringify({status:"ok", data: data}); 
+		return callback(err) if err?;
+		console.log("returning ", data);
+		callback(null, data); 
 
 
-handle_setProject = (req, res) ->
-	msg = req.body;
-	return res.send(JSON.stringify({status:"error", message:"Project not found" })) if not projects[msg.project_id]?;
-	console.log("registering "+msg.client+" to project "+msg.project_id);
+handle_setProject = (msg, callback) ->
+	return callback("Project not found") if not projects[msg.project_id]?;
 	agentToProject[msg.client] = { project: msg.project_id, vfs: projects[msg.project_id] };
-	res.send JSON.stringify({status:"ok"});
+	callback();
 
-handle_saveFile = (req, res) ->
-	msg = req.body;
-	return res.send(JSON.stringify({status:"error", message:"No file given" })) if not msg.file?;
+handle_saveFile = (msg) ->
+	return callback("No file given") if not msg.file?;
 
 	projectData  = agentToProject[msg.client];
-	return res.send(JSON.stringify({status:"error", message:"No project opened." })) if not projectData?;
+	return callback("No project opened.") if not projectData?;
 
 	vfs = projectData.vfs
 	async.waterfall [
@@ -70,13 +91,12 @@ handle_saveFile = (req, res) ->
 			q.emit('data', text)
 			q.emit('end')
 	], (err) ->
-		return res.send JSON.stringify({status:"error", message: err}) if err?;
-		res.send JSON.stringify({status:"ok"}); 
-			
+		return callback(err) if err?;
+		callback(); 
 
 updateIfNecessary = (docName, initValueCallback, callback) ->
 	async.waterfall [
-		(callback) -> console.log("creating", docName); model.create(docName, default_text_format, {}, callback);
+		(callback) -> model.create(docName, default_text_format, {}, callback);
 		(callback) -> initValueCallback(callback);
 		(doc, callback) ->
 			op = {};
@@ -122,6 +142,7 @@ writeVFSFile = (vfs, docName, data, callback)->
 auth = (agent, action) ->
 	# handling normal actions
 	# console.log("session id=", agent.sessionId, "action=",action.name);
+	# console.log("handling auth ", agent, action);
 
 	return action.accept() if action.name in ["connect"]
 
@@ -158,17 +179,45 @@ auth = (agent, action) ->
 
 
 exports.attach = (app, options)->
+<<<<<<< HEAD
 	app.post '/setProject', handle_setProject;	
 	app.post '/saveFile', handle_saveFile;	
 	app.get '/list', handle_listFiles;	
 	app.get '/start', service.start;
 	app.get '/stop' , service.stop;
 
+=======
+>>>>>>> upstream/master
 	options.auth = auth
 	model = sharejs.createModel(options) if not model?
-	sharejs.attach(app, options, model);
+	createAgent = require('share/src/server/useragent') model, options
+
+	app.use "/share", express.static path.dirname(require.resolve("share"))+'/webclient';
+
+	app.use browserChannel options.browserChannel, (session) ->
+		sessionWrapper = new EventEmitter();
+
+		session.on 'message', (recvMsg) ->
+			if (recvMsg.action?)
+				handle_action recvMsg, (err, msg) ->
+					console.log("sending back ", err, msg);
+					return session.send({status: "error", msg: msg, msgid: recvMsg.msgid}) if err?
+					session.send({status: "ok", msg: msg, msgid: recvMsg.msgid})
+
+			else
+				sessionWrapper.emit "message", recvMsg
+
+		session.on 'close', (reason) ->
+			sessionWrapper.emit "close", reason
+
+		sessionWrapper.ready = -> @state isnt 'closed'
+		sessionWrapper.send = session.send
+		sessionWrapper.flush = session.flush
+		sessionWrapper.stop = session.stop
+		sessionHandler sessionWrapper, createAgent
+
+
 
 exports.createProject = (vfs, project_id = hat()) ->
 	projects[project_id] = vfs
 	console.log("project "+project_id+" was generated");
-
